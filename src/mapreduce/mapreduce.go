@@ -55,6 +55,7 @@ type MapReduce struct {
 	file            string // Name of input file
 	MasterAddress   string
 	registerChannel chan string
+	idleChannel     chan string
 	DoneChannel     chan bool
 	alive           bool
 	l               net.Listener
@@ -76,6 +77,7 @@ func InitMapReduce(nmap int, nreduce int,
 	mr.MasterAddress = master
 	mr.alive = true
 	mr.registerChannel = make(chan string)
+	mr.idleChannel = make(chan string)
 	mr.DoneChannel = make(chan bool)
 	mr.nWorker = 0
 	mr.Workers = make(map[string]*WorkerInfo)
@@ -94,10 +96,11 @@ func MakeMapReduce(nmap int, nreduce int,
 
 func (mr *MapReduce) Register(args *RegisterArgs, res *RegisterReply) error {
 	DPrintf("Register: worker %s\n", args.Worker)
-	mr.registerChannel <- args.Worker
-	res.OK = true
+	mr.idleChannel <- args.Worker
+	//mr.registerChannel <- args.Worker
 	mr.Workers[args.Worker] = &WorkerInfo{args.Worker}
 	mr.nWorker++
+	res.OK = true
 	return nil
 }
 
@@ -375,8 +378,6 @@ func (mr *MapReduce) Run() {
 	fmt.Printf("Run mapreduce job %s %s\n", mr.MasterAddress, mr.file)
 
 	mr.Split(mr.file)
-	<-mr.registerChannel
-
 	mr.stats = mr.RunMaster()
 	mr.Merge()
 	mr.CleanupRegistration()

@@ -2,7 +2,8 @@ package mapreduce
 
 import "container/list"
 import "fmt"
-import "math"
+
+//import "math"
 
 type WorkerInfo struct {
 	address string
@@ -29,42 +30,43 @@ func (mr *MapReduce) KillWorkers() *list.List {
 
 func (mr *MapReduce) RunMaster() *list.List {
 	mr.JobDoneChannel = make(chan int)
-	book := make(map[int]*WorkerInfo)
 
-	idx := 0
-	for _, w := range mr.Workers {
-		if idx > (mr.nWorker - 1) {
-			break
-		}
-		for i := 0; i < int(math.Floor(float64(mr.nMap/mr.nWorker))); i++ {
-			go func(idx int, i int) {
-				JobNumber := idx + i*mr.nWorker
+	for i := 0; i < mr.nMap; i++ {
+		go func(JobNumber int) {
+			for {
+				w := <-mr.idleChannel
 				args := &DoJobArgs{mr.file, "Map", JobNumber, mr.nReduce}
 				var reply = &DoJobReply{}
-				book[JobNumber] = w
-				ok := call(w.address, "Worker.DoJob", args, reply)
+				ok := call(w, "Worker.DoJob", args, reply)
 				if ok == true {
 					mr.JobDoneChannel <- args.JobNumber
+					mr.idleChannel <- w
+					return
 				}
-			}(idx, i)
-		}
-		idx++
+			}
+		}(i)
 	}
 
 	for i := 0; i < mr.nMap; i++ {
 		<-mr.JobDoneChannel
 	}
+
 	for i := 0; i < mr.nReduce; i++ {
 		go func(JobNumber int) {
-			args := &DoJobArgs{mr.file, "Reduce", JobNumber, mr.nMap}
-			var reply = &DoJobReply{}
-			w := book[JobNumber]
-			ok := call(w.address, "Worker.DoJob", args, reply)
-			if ok == true {
-				mr.JobDoneChannel <- args.JobNumber
+			for {
+				w := <-mr.idleChannel
+				args := &DoJobArgs{mr.file, "Reduce", JobNumber, mr.nMap}
+				var reply = &DoJobReply{}
+				ok := call(w, "Worker.DoJob", args, reply)
+				if ok == true {
+					mr.JobDoneChannel <- args.JobNumber
+					mr.idleChannel <- w
+					return
+				}
 			}
 		}(i)
 	}
+
 	for i := 0; i < mr.nReduce; i++ {
 		<-mr.JobDoneChannel
 	}
