@@ -39,8 +39,8 @@ func (mr *MapReduce) RunMaster() *list.List {
 				var reply = &DoJobReply{}
 				ok := call(w, "Worker.DoJob", args, reply)
 				if ok == true {
-					mr.JobDoneChannel <- args.JobNumber
 					mr.idleChannel <- w
+					mr.JobDoneChannel <- args.JobNumber
 					return
 				}
 			}
@@ -59,8 +59,8 @@ func (mr *MapReduce) RunMaster() *list.List {
 				var reply = &DoJobReply{}
 				ok := call(w, "Worker.DoJob", args, reply)
 				if ok == true {
-					mr.JobDoneChannel <- args.JobNumber
 					mr.idleChannel <- w
+					mr.JobDoneChannel <- args.JobNumber
 					return
 				}
 			}

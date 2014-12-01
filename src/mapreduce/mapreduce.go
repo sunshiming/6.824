@@ -36,6 +36,8 @@ import "hash/fnv"
 // Debugging
 const Debug = 0
 
+const MaxWorkerNumber = 100
+
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug > 0 {
 		n, err = fmt.Printf(format, a...)
@@ -77,7 +79,7 @@ func InitMapReduce(nmap int, nreduce int,
 	mr.MasterAddress = master
 	mr.alive = true
 	mr.registerChannel = make(chan string)
-	mr.idleChannel = make(chan string)
+	mr.idleChannel = make(chan string, MaxWorkerNumber)
 	mr.DoneChannel = make(chan bool)
 	mr.nWorker = 0
 	mr.Workers = make(map[string]*WorkerInfo)
