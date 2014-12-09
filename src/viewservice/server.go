@@ -2,7 +2,6 @@ package viewservice
 
 import (
 	"container/list"
-	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -16,7 +15,7 @@ type ServerStat struct {
 	LastPing  time.Time
 	DeadCount int
 	alive     bool
-	acked     bool
+	acked     uint
 	idx       *list.Element
 }
 
@@ -33,6 +32,7 @@ type ViewServer struct {
 	view       View
 	state      map[string]*ServerStat
 	serverlist *list.List
+	ack        uint
 }
 
 //
@@ -50,17 +50,18 @@ func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
 		server, ok := vs.state[args.Me]
 		if ok {
 			server.idx.Value = Node{args.Me, false}
-			delete(vs.state, args.Me)
 		}
-		vs.serverlist.PushBack(Node{args.Me, true})
-		vs.state[args.Me] = &ServerStat{time.Now(), 0, true, false, vs.serverlist.Back()}
+		idx := vs.serverlist.PushBack(Node{args.Me, true})
+		vs.state[args.Me] = &ServerStat{time.Now(), 0, true, 0, idx}
+
 	} else {
 		server, ok := vs.state[args.Me]
-		if !ok {
-			return errors.New("no such server or view.")
+		if ok {
+			server.LastPing = time.Now()
+			if vs.isPrimary(args.Me) {
+				vs.ack = vs.Max(vs.ack, args.Viewnum)
+			}
 		}
-		server.LastPing = time.Now()
-		server.acked = true
 	}
 	reply.View = vs.view
 
@@ -76,8 +77,23 @@ func (vs *ViewServer) Get(args *GetArgs, reply *GetReply) error {
 	return nil
 }
 
+func (vs *ViewServer) isPrimary(name string) bool {
+	return name == vs.view.Primary
+}
+
+func (vs *ViewServer) isBackup(name string) bool {
+	return name == vs.view.Backup
+}
+
 func (vs ViewServer) NotUsed(name string) bool {
 	return name != vs.view.Primary && name != vs.view.Backup
+}
+
+func (vs ViewServer) Max(a, b uint) uint {
+	if a >= b {
+		return a
+	}
+	return b
 }
 
 func (vs *ViewServer) ChangeView() {
@@ -112,38 +128,39 @@ func (vs *ViewServer) tick() {
 	if vs.view.Viewnum == 0 {
 		return
 	}
-
+	now := time.Now()
 	vs.mu.Lock()
-	//for name, server := range vs.state {
-	//for idx, name := range vs.serverlist {
 	for e := vs.serverlist.Front(); e != nil; e = e.Next() {
 		name := e.Value.(Node).name
+		alive := e.Value.(Node).alive
 		server := vs.state[name]
 
-		if !e.Value.(Node).alive {
+		if !alive {
 			if name == vs.view.Primary {
 				vs.view.Primary = ""
 				vs.view.Backup = ""
 			}
-			//delete(vs.state, name)
 			vs.serverlist.Remove(e)
 			continue
 		}
-
-		if time.Since(server.LastPing) > PingInterval {
+		if now.Sub(server.LastPing) > PingInterval {
+			//if time.Since(server.LastPing) > PingInterval {
 			server.DeadCount++
+		} else {
+			server.DeadCount = 0
 		}
+
 		if server.DeadCount >= DeadPings {
 			server.alive = false
 			vs.serverlist.Remove(e)
 			delete(vs.state, name)
-			if name == vs.view.Primary {
+			//fmt.Printf("server delete  %s\n\n", name)
+			if name == vs.view.Primary && vs.ack == vs.view.Viewnum {
 				vs.view.Primary = ""
 				vs.view.Backup = ""
 			} else if name == vs.view.Backup {
 				vs.view.Backup = ""
 			}
-			//vs.IdleServers = append(vs.ServerList[:server.idx], vs.ServersList[server.idx+1:]...)
 		}
 	}
 	if vs.view.Primary == "" || vs.view.Backup == "" {
@@ -169,8 +186,8 @@ func StartServer(me string) *ViewServer {
 	vs.state = make(map[string]*ServerStat)
 	vs.mu = &sync.Mutex{}
 	vs.view = View{0, "", ""}
-	//vs.serverlist = make([]string, 10)
 	vs.serverlist = list.New()
+	vs.ack = 0
 	// tell net/rpc about our RPC server and handlers.
 	rpcs := rpc.NewServer()
 	rpcs.Register(vs)
