@@ -12,7 +12,6 @@ import (
 )
 
 type ServerStat struct {
-	LastPing  time.Time
 	DeadCount int
 	alive     bool
 	acked     uint
@@ -52,12 +51,12 @@ func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
 			server.idx.Value = Node{args.Me, false}
 		}
 		idx := vs.serverlist.PushBack(Node{args.Me, true})
-		vs.state[args.Me] = &ServerStat{time.Now(), 0, true, 0, idx}
+		vs.state[args.Me] = &ServerStat{0, true, 0, idx}
 
 	} else {
 		server, ok := vs.state[args.Me]
 		if ok {
-			server.LastPing = time.Now()
+			server.DeadCount = 0
 			if vs.isPrimary(args.Me) {
 				vs.ack = vs.Max(vs.ack, args.Viewnum)
 			}
@@ -85,6 +84,14 @@ func (vs *ViewServer) isBackup(name string) bool {
 	return name == vs.view.Backup
 }
 
+func (vs ViewServer) hasPrimary() bool {
+	return vs.view.Primary != ""
+}
+
+func (vs ViewServer) hasBackup() bool {
+	return vs.view.Backup != ""
+}
+
 func (vs ViewServer) NotUsed(name string) bool {
 	return name != vs.view.Primary && name != vs.view.Backup
 }
@@ -98,11 +105,11 @@ func (vs ViewServer) Max(a, b uint) uint {
 
 func (vs *ViewServer) ChangeView() {
 	changed := false
-	//if vs.state[vs.view.Primary].acked {
+
 	for e := vs.serverlist.Front(); e != nil; e = e.Next() {
 		name := e.Value.(Node).name
-		server := vs.state[name]
-		if vs.NotUsed(name) && server.alive {
+		//server := vs.state[name]
+		if vs.NotUsed(name) {
 			if vs.view.Primary == "" {
 				vs.view.Primary = name
 				changed = true
@@ -128,7 +135,7 @@ func (vs *ViewServer) tick() {
 	if vs.view.Viewnum == 0 {
 		return
 	}
-	now := time.Now()
+
 	vs.mu.Lock()
 	for e := vs.serverlist.Front(); e != nil; e = e.Next() {
 		name := e.Value.(Node).name
@@ -143,14 +150,9 @@ func (vs *ViewServer) tick() {
 			vs.serverlist.Remove(e)
 			continue
 		}
-		if now.Sub(server.LastPing) > PingInterval {
-			//if time.Since(server.LastPing) > PingInterval {
-			server.DeadCount++
-		} else {
-			server.DeadCount = 0
-		}
+		server.DeadCount++
 
-		if server.DeadCount >= DeadPings {
+		if server.DeadCount > DeadPings {
 			server.alive = false
 			vs.serverlist.Remove(e)
 			delete(vs.state, name)
@@ -163,7 +165,7 @@ func (vs *ViewServer) tick() {
 			}
 		}
 	}
-	if vs.view.Primary == "" || vs.view.Backup == "" {
+	if !vs.hasPrimary() || !vs.hasBackup() {
 		vs.ChangeView()
 	}
 
