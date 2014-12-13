@@ -8,6 +8,8 @@ import "fmt"
 // import "crypto/rand"
 // import "math/big"
 
+const RETRY = 5
+
 type Clerk struct {
 	vs     *viewservice.Clerk
 	Me     string
@@ -26,6 +28,10 @@ func MakeClerk(vshost string, me string) *Clerk {
 	return ck
 }
 
+func (ck *Clerk) UpdateServer() {
+	view, _ := ck.vs.Ping(ck.vs.Viewnum)
+}
+
 //
 // fetch a key's value from the current primary;
 // if they key has never been set, return "".
@@ -36,8 +42,15 @@ func MakeClerk(vshost string, me string) *Clerk {
 func (ck *Clerk) Get(key string) string {
 	args := &GetArgs{key, false}
 	var reply GetReply
+	cnt := 0
 
 	for !call(ck.server, "PBServer.Get", args, &reply) {
+		if cnt >= RETRY {
+			ck.UpdateServer()
+			cnt = 0
+			continue
+		}
+		cnt++
 	}
 
 	return reply.Value
@@ -50,8 +63,14 @@ func (ck *Clerk) Get(key string) string {
 func (ck *Clerk) PutExt(key string, value string, dohash bool) string {
 	args := &PutArgs{key, value, dohash, nrand(), ck.Me}
 	var reply PutReply
+	cnt := 0
 
 	for !call(ck.server, "PBServer.Put", args, &reply) {
+		if cnt >= RETRY {
+			ck.UpdateServer()
+			cnt = 0
+			continue
+		}
 	}
 
 	return reply.PreviousValue
