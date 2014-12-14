@@ -1,7 +1,10 @@
 package pbservice
 
 import "viewservice"
+
 import "fmt"
+import "sync"
+import "time"
 
 // You'll probably need to uncomment these:
 // import "time"
@@ -14,6 +17,8 @@ type Clerk struct {
 	vs     *viewservice.Clerk
 	Me     string
 	server string
+	mu     *sync.Mutex
+	view   viewservice.View
 	// Your declarations here
 }
 
@@ -21,15 +26,20 @@ func MakeClerk(vshost string, me string) *Clerk {
 	ck := new(Clerk)
 	ck.vs = viewservice.MakeClerk(me, vshost)
 	ck.Me = me
+	ck.mu = &sync.Mutex{}
 
-	view, _ := ck.vs.Ping(0)
-	ck.server = view.Primary
+	view, _ := ck.vs.Get()
+	ck.view = view
+	ck.server = ck.view.Primary
 
 	return ck
 }
 
 func (ck *Clerk) UpdateServer() {
-	view, _ := ck.vs.Ping(ck.vs.Viewnum)
+	ck.mu.Lock()
+	ck.view, _ = ck.vs.Get()
+	ck.server = ck.view.Primary
+	ck.mu.Unlock()
 }
 
 //
@@ -44,13 +54,22 @@ func (ck *Clerk) Get(key string) string {
 	var reply GetReply
 	cnt := 0
 
-	for !call(ck.server, "PBServer.Get", args, &reply) {
-		if cnt >= RETRY {
+	if ck.server == "" {
+		ck.UpdateServer()
+	}
+
+	for !call(ck.server, "PBServer.Get", args, &reply) || reply.Err != "" {
+		fmt.Printf("")
+		if reply.Err == ErrWrongServer {
 			ck.UpdateServer()
 			cnt = 0
-			continue
+		} else if cnt >= RETRY {
+			ck.UpdateServer()
+			cnt = 0
+		} else {
+			cnt++
 		}
-		cnt++
+		time.Sleep(viewservice.PingInterval)
 	}
 
 	return reply.Value
@@ -65,12 +84,21 @@ func (ck *Clerk) PutExt(key string, value string, dohash bool) string {
 	var reply PutReply
 	cnt := 0
 
-	for !call(ck.server, "PBServer.Put", args, &reply) {
-		if cnt >= RETRY {
+	if ck.server == "" {
+		ck.UpdateServer()
+	}
+	for !call(ck.server, "PBServer.Put", args, &reply) || reply.Err != "" {
+
+		if reply.Err == ErrWrongServer {
 			ck.UpdateServer()
 			cnt = 0
-			continue
+		} else if cnt >= RETRY {
+			ck.UpdateServer()
+			cnt = 0
+		} else {
+			cnt++
 		}
+		time.Sleep(viewservice.PingInterval)
 	}
 
 	return reply.PreviousValue

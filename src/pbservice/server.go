@@ -11,7 +11,8 @@ import "syscall"
 import "math/rand"
 import "sync"
 import "strconv"
-import "errors"
+
+//import "errors"
 
 // Debugging
 const Debug = 0
@@ -24,24 +25,24 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 }
 
 type PBServer struct {
-	l          net.Listener
-	dead       bool // for testing
-	unreliable bool // for testing
-	me         string
-	vs         *viewservice.Clerk
-	done       sync.WaitGroup
-	finish     chan interface{}
-	view       viewservice.View
-	whoami     string
-	db         map[string]string
-	mu         *sync.Mutex
-	filter     map[string]string
+	l            net.Listener
+	dead         bool // for testing
+	unreliable   bool // for testing
+	me           string
+	vs           *viewservice.Clerk
+	done         sync.WaitGroup
+	finish       chan interface{}
+	view         viewservice.View
+	whoami       string
+	db           map[string]string
+	mu           *sync.Mutex
+	filter       map[string]uint32
+	initialnized bool
 
 	// Your declarations here.
 }
 
 func (pb *PBServer) SetWhoAmI(view viewservice.View) {
-	pb.mu.Lock()
 	if pb.me == view.Primary {
 		pb.whoami = "Primary"
 	} else if pb.me == view.Backup {
@@ -49,14 +50,19 @@ func (pb *PBServer) SetWhoAmI(view viewservice.View) {
 	} else {
 		pb.whoami = "Unknown"
 	}
-	pb.mu.Unlock()
 }
 
 func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
 	var Value string
 	pb.mu.Lock()
-	token := hash(strconv.Itoa(int(args.Token)) + args.me)
-	previous, ok := pb.filter[args.me]
+	if pb.whoami == "Backup" {
+		reply.Err = ErrWrongServer
+		pb.mu.Unlock()
+		return nil
+	}
+
+	token := hash(strconv.Itoa(int(args.Token)) + args.Me)
+	previous, ok := pb.filter[args.Me]
 	if ok {
 		if previous == token {
 			//reject dupicate
@@ -64,7 +70,49 @@ func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
 			return nil
 		}
 	} else {
-		pb.filter[args.me] = token
+		pb.filter[args.Me] = token
+	}
+
+	if args.DoHash {
+		val, ok := pb.db[args.Key]
+		if !ok {
+			val = ""
+		}
+		reply.PreviousValue = val
+		Value = strconv.Itoa(int(hash(val + args.Value)))
+		//fmt.Println(val)
+	} else {
+		Value = args.Value
+	}
+	pb.db[args.Key] = Value
+
+	//Forwards the updates to the backcup
+	if pb.view.Backup != "" {
+		var BackupReply PutReply
+		args.Token = nrand()
+		args.Me = pb.me
+		for !call(pb.view.Backup, "PBServer.SyncPut", args, &BackupReply) {
+			time.Sleep(viewservice.PingInterval)
+		}
+	}
+
+	pb.mu.Unlock()
+	return nil
+}
+
+func (pb *PBServer) SyncPut(args *PutArgs, reply *PutReply) error {
+	var Value string
+	pb.mu.Lock()
+	token := hash(strconv.Itoa(int(args.Token)) + args.Me)
+	previous, ok := pb.filter[args.Me]
+	if ok {
+		if previous == token {
+			//reject dupicate
+			pb.mu.Unlock()
+			return nil
+		}
+	} else {
+		pb.filter[args.Me] = token
 	}
 
 	if args.DoHash {
@@ -78,26 +126,29 @@ func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
 		Value = args.Value
 	}
 	pb.db[args.Key] = Value
-
-	//Forwards the updates to the backcup
-	var BackupReply PutReply
-	args.Token = nrand()
-	args.Me = pb.me
-	for !call(pb.view.Backup, "PBServer.Put", args, &BackupReply) {
-	}
-
 	pb.mu.Unlock()
 	return nil
+
 }
 
 func (pb *PBServer) Get(args *GetArgs, reply *GetReply) error {
 	pb.mu.Lock()
+	if pb.whoami == "Backup" {
+		reply.Err = ErrWrongServer
+		pb.mu.Unlock()
+		return nil
+	}
+
 	if args.GetAll {
-		reply.db = pb.db
+		reply.Db = pb.db
+		if pb.view.Backup == "" {
+			pb.view, _ = pb.vs.Ping(pb.view.Viewnum)
+			pb.SetWhoAmI(pb.view)
+		}
 	} else {
 		v, ok := pb.db[args.Key]
 		if !ok {
-			reply.Err = "no such key/value."
+			reply.Err = ErrNoKey
 			v = ""
 			//return errors.New("no such key/value")
 		}
@@ -109,8 +160,24 @@ func (pb *PBServer) Get(args *GetArgs, reply *GetReply) error {
 
 // ping the viewserver periodically.
 func (pb *PBServer) tick() {
-	view, _ := pb.vs.Ping(pb.view.Viewnum)
-	pb.SetWhoAmI(view)
+	pb.mu.Lock()
+	pb.view, _ = pb.vs.Ping(pb.view.Viewnum)
+	pb.SetWhoAmI(pb.view)
+
+	if !pb.initialnized && pb.view.Backup == pb.me {
+
+		args := &GetArgs{"", true}
+		var reply GetReply
+		reply.Db = make(map[string]string)
+
+		for !call(pb.view.Primary, "PBServer.Get", args, &reply) {
+			time.Sleep(viewservice.PingInterval)
+		}
+		pb.db = reply.Db
+		pb.initialnized = true
+	}
+
+	pb.mu.Unlock()
 }
 
 // tell the server to shut itself down.
@@ -127,19 +194,11 @@ func StartServer(vshost string, me string) *PBServer {
 	pb.finish = make(chan interface{})
 	pb.whoami = "Unknown"
 	pb.db = make(map[string]string)
-	pb.filter = make(map[string]string)
+	pb.filter = make(map[string]uint32)
 	pb.mu = &sync.Mutex{}
+	pb.initialnized = false
 
 	pb.view, _ = pb.vs.Ping(0)
-
-	if pb.view.Backup == pb.me {
-		args := &GetArgs{"", true}
-		var reply GetReply
-
-		for !call(pb.view.Primary, "PBServer.Get", args, &reply) {
-		}
-		pb.db = reply.db
-	}
 
 	rpcs := rpc.NewServer()
 	rpcs.Register(pb)

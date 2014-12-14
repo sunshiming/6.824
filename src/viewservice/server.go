@@ -156,7 +156,7 @@ func (vs *ViewServer) tick() {
 			server.alive = false
 			vs.serverlist.Remove(e)
 			delete(vs.state, name)
-			//fmt.Printf("server delete  %s\n\n", name)
+			//fmt.Printf("server delete  %s\n\n  acked = %d    current viewnum = %d \n\n", name, vs.ack, vs.view.Viewnum)
 			if name == vs.view.Primary && vs.ack == vs.view.Viewnum {
 				vs.view.Primary = ""
 				vs.view.Backup = ""

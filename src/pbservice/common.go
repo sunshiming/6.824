@@ -1,7 +1,9 @@
 package pbservice
 
 import "hash/fnv"
-import "time"
+
+//import "time"
+import "fmt"
 import "crypto/rand"
 import "math/big"
 import "net/rpc"
@@ -38,7 +40,7 @@ type GetArgs struct {
 type GetReply struct {
 	Err   Err
 	Value string
-	db    map[string]string
+	Db    map[string]string
 }
 
 // Your RPC definitions here.
