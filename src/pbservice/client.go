@@ -11,8 +11,6 @@ import "time"
 // import "crypto/rand"
 // import "math/big"
 
-const RETRY = 5
-
 type Clerk struct {
 	vs     *viewservice.Clerk
 	Me     string
@@ -59,11 +57,7 @@ func (ck *Clerk) Get(key string) string {
 	}
 
 	for !call(ck.server, "PBServer.Get", args, &reply) || reply.Err != "" {
-		fmt.Printf("")
-		if reply.Err == ErrWrongServer {
-			ck.UpdateServer()
-			cnt = 0
-		} else if cnt >= RETRY {
+		if reply.Err == ErrWrongServer || cnt >= RETRY {
 			ck.UpdateServer()
 			cnt = 0
 		} else {
@@ -87,12 +81,10 @@ func (ck *Clerk) PutExt(key string, value string, dohash bool) string {
 	if ck.server == "" {
 		ck.UpdateServer()
 	}
-	for !call(ck.server, "PBServer.Put", args, &reply) || reply.Err != "" {
 
-		if reply.Err == ErrWrongServer {
-			ck.UpdateServer()
-			cnt = 0
-		} else if cnt >= RETRY {
+	for !call(ck.server, "PBServer.Put", args, &reply) || reply.Err != "" {
+		fmt.Printf("")
+		if reply.Err == ErrWrongServer || cnt >= RETRY {
 			ck.UpdateServer()
 			cnt = 0
 		} else {

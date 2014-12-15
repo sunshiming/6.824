@@ -169,7 +169,6 @@ func TestAtMostOnce(t *testing.T) {
 
 	// give p+b time to ack, initialize
 	time.Sleep(viewservice.PingInterval * viewservice.DeadPings)
-
 	ck := MakeClerk(vshost, "")
 	k := "counter"
 	val := ""
@@ -182,12 +181,10 @@ func TestAtMostOnce(t *testing.T) {
 		h := hash(val + v)
 		val = strconv.Itoa(int(h))
 	}
-
 	v := ck.Get(k)
 	if v != val {
 		t.Fatalf("ck.Get() returned %v but expected %v\n", v, val)
 	}
-
 	fmt.Printf("  ... Passed\n")
 
 	for i := 0; i < nservers; i++ {
@@ -241,7 +238,6 @@ func TestFailPut(t *testing.T) {
 	s2.kill()
 	ck.Put("a", "aaa")
 	check(ck, "a", "aaa")
-
 	for i := 0; i < viewservice.DeadPings*3; i++ {
 		v, _ := vck.Get()
 		if v.Viewnum > v1.Viewnum && v.Primary != "" && v.Backup != "" {

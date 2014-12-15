@@ -14,6 +14,8 @@ const (
 	ErrWrongServer = "ErrWrongServer"
 )
 
+const RETRY = 10
+
 type Err string
 
 type PutArgs struct {
@@ -86,7 +88,7 @@ func call(srv string, rpcname string,
 	if err == nil {
 		return true
 	}
-
+	//fmt.Printf(srv + "  " + rpcname + "   ")
 	fmt.Println(err)
 	return false
 }

@@ -24,6 +24,11 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 	return
 }
 
+type Node struct {
+	Token         uint32
+	PreviousValue string
+}
+
 type PBServer struct {
 	l            net.Listener
 	dead         bool // for testing
@@ -36,7 +41,7 @@ type PBServer struct {
 	whoami       string
 	db           map[string]string
 	mu           *sync.Mutex
-	filter       map[string]uint32
+	filter       map[string]Node
 	initialnized bool
 
 	// Your declarations here.
@@ -52,25 +57,74 @@ func (pb *PBServer) SetWhoAmI(view viewservice.View) {
 	}
 }
 
+func (pb *PBServer) UpdateServer() {
+	pb.mu.Lock()
+	pb.view, _ = pb.vs.Ping(pb.view.Viewnum)
+	pb.SetWhoAmI(pb.view)
+	pb.mu.Unlock()
+}
+
 func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
 	var Value string
+	token := hash(strconv.Itoa(int(args.Token)) + args.Me)
 	pb.mu.Lock()
+
 	if pb.whoami == "Backup" {
 		reply.Err = ErrWrongServer
 		pb.mu.Unlock()
 		return nil
 	}
 
-	token := hash(strconv.Itoa(int(args.Token)) + args.Me)
 	previous, ok := pb.filter[args.Me]
-	if ok {
-		if previous == token {
-			//reject dupicate
-			pb.mu.Unlock()
-			return nil
-		}
+	if ok && previous.Token == token {
+		//reject dupicate
+		reply.PreviousValue = previous.PreviousValue
+		pb.mu.Unlock()
+		return nil
+	}
+
+	val, ok := pb.db[args.Key]
+	if !ok {
+		val = ""
+	}
+	reply.PreviousValue = val
+	pb.filter[args.Me] = Node{token, val}
+
+	if args.DoHash {
+		//fmt.Printf("previous  %v  token   %v current val %v      previous val %v \n", previous, token, args.Value, val)
+		Value = strconv.Itoa(int(hash(val + args.Value)))
 	} else {
-		pb.filter[args.Me] = token
+		Value = args.Value
+	}
+	pb.db[args.Key] = Value
+	pb.mu.Unlock()
+
+	//Forwards the updates to the backcup
+	if pb.view.Backup != "" {
+		var BackupReply PutReply
+		args.Token = nrand()
+		args.Me = pb.me
+		for !call(pb.view.Backup, "PBServer.SyncPut", args, &BackupReply) {
+			if pb.view.Backup == "" {
+				break
+			}
+			time.Sleep(viewservice.PingInterval)
+		}
+	}
+
+	return nil
+}
+
+func (pb *PBServer) SyncPut(args *PutArgs, reply *PutReply) error {
+	var Value string
+	token := hash(strconv.Itoa(int(args.Token)) + args.Me)
+	pb.mu.Lock()
+	defer pb.mu.Unlock()
+
+	previous, ok := pb.filter[args.Me]
+	if ok && previous.Token == token {
+		reply.PreviousValue = previous.PreviousValue
+		return nil
 	}
 
 	if args.DoHash {
@@ -79,63 +133,22 @@ func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
 			val = ""
 		}
 		reply.PreviousValue = val
+		pb.filter[args.Me] = Node{token, val}
 		Value = strconv.Itoa(int(hash(val + args.Value)))
-		//fmt.Println(val)
 	} else {
 		Value = args.Value
 	}
 	pb.db[args.Key] = Value
-
-	//Forwards the updates to the backcup
-	if pb.view.Backup != "" {
-		var BackupReply PutReply
-		args.Token = nrand()
-		args.Me = pb.me
-		for !call(pb.view.Backup, "PBServer.SyncPut", args, &BackupReply) {
-			time.Sleep(viewservice.PingInterval)
-		}
-	}
-
-	pb.mu.Unlock()
-	return nil
-}
-
-func (pb *PBServer) SyncPut(args *PutArgs, reply *PutReply) error {
-	var Value string
-	pb.mu.Lock()
-	token := hash(strconv.Itoa(int(args.Token)) + args.Me)
-	previous, ok := pb.filter[args.Me]
-	if ok {
-		if previous == token {
-			//reject dupicate
-			pb.mu.Unlock()
-			return nil
-		}
-	} else {
-		pb.filter[args.Me] = token
-	}
-
-	if args.DoHash {
-		v, ok := pb.db[args.Key]
-		if !ok {
-			v = ""
-		}
-		reply.PreviousValue = v
-		Value = strconv.Itoa(int(hash(v + args.Value)))
-	} else {
-		Value = args.Value
-	}
-	pb.db[args.Key] = Value
-	pb.mu.Unlock()
 	return nil
 
 }
 
 func (pb *PBServer) Get(args *GetArgs, reply *GetReply) error {
 	pb.mu.Lock()
+	defer pb.mu.Unlock()
+
 	if pb.whoami == "Backup" {
 		reply.Err = ErrWrongServer
-		pb.mu.Unlock()
 		return nil
 	}
 
@@ -154,7 +167,6 @@ func (pb *PBServer) Get(args *GetArgs, reply *GetReply) error {
 		}
 		reply.Value = v
 	}
-	pb.mu.Unlock()
 	return nil
 }
 
@@ -194,7 +206,7 @@ func StartServer(vshost string, me string) *PBServer {
 	pb.finish = make(chan interface{})
 	pb.whoami = "Unknown"
 	pb.db = make(map[string]string)
-	pb.filter = make(map[string]uint32)
+	pb.filter = make(map[string]Node)
 	pb.mu = &sync.Mutex{}
 	pb.initialnized = false
 
