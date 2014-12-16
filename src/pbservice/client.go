@@ -1,8 +1,6 @@
 package pbservice
 
 import "viewservice"
-
-import "fmt"
 import "sync"
 import "time"
 
@@ -34,10 +32,10 @@ func MakeClerk(vshost string, me string) *Clerk {
 }
 
 func (ck *Clerk) UpdateServer() {
-	ck.mu.Lock()
+	//ck.mu.Lock()
 	ck.view, _ = ck.vs.Get()
 	ck.server = ck.view.Primary
-	ck.mu.Unlock()
+	//ck.mu.Unlock()
 }
 
 //
@@ -83,7 +81,6 @@ func (ck *Clerk) PutExt(key string, value string, dohash bool) string {
 	}
 
 	for !call(ck.server, "PBServer.Put", args, &reply) || reply.Err != "" {
-		fmt.Printf("")
 		if reply.Err == ErrWrongServer || cnt >= RETRY {
 			ck.UpdateServer()
 			cnt = 0

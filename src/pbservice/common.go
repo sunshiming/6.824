@@ -14,7 +14,7 @@ const (
 	ErrWrongServer = "ErrWrongServer"
 )
 
-const RETRY = 10
+const RETRY = 0
 
 type Err string
 

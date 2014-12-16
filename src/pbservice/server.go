@@ -11,6 +11,7 @@ import "syscall"
 import "math/rand"
 import "sync"
 import "strconv"
+import "errors"
 
 //import "errors"
 
@@ -96,21 +97,34 @@ func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
 	} else {
 		Value = args.Value
 	}
-	pb.db[args.Key] = Value
-	pb.mu.Unlock()
 
 	//Forwards the updates to the backcup
 	if pb.view.Backup != "" {
 		var BackupReply PutReply
 		args.Token = nrand()
 		args.Me = pb.me
-		for !call(pb.view.Backup, "PBServer.SyncPut", args, &BackupReply) {
-			if pb.view.Backup == "" {
-				break
-			}
-			time.Sleep(viewservice.PingInterval)
+		ok := call(pb.view.Backup, "PBServer.SyncPut", args, &BackupReply)
+		if !ok {
+			pb.mu.Unlock()
+			return errors.New("Sync Fail.")
 		}
+		// cnt := 0
+		// for !call(pb.view.Backup, "PBServer.SyncPut", args, &BackupReply) {
+		// 	if cnt >= RETRY {
+		// 		pb.view, _ = pb.vs.Ping(pb.view.Viewnum)
+		// 		pb.SetWhoAmI(pb.view)
+		// 		cnt = 0
+		// 		if pb.view.Backup == "" {
+		// 			break
+		// 		}
+		// 	} else {
+		// 		cnt++
+		// 	}
+		// 	time.Sleep(viewservice.PingInterval)
+		// }
 	}
+	pb.db[args.Key] = Value
+	pb.mu.Unlock()
 
 	return nil
 }
@@ -119,11 +133,12 @@ func (pb *PBServer) SyncPut(args *PutArgs, reply *PutReply) error {
 	var Value string
 	token := hash(strconv.Itoa(int(args.Token)) + args.Me)
 	pb.mu.Lock()
-	defer pb.mu.Unlock()
+	//	defer pb.mu.Unlock()
 
 	previous, ok := pb.filter[args.Me]
 	if ok && previous.Token == token {
 		reply.PreviousValue = previous.PreviousValue
+		pb.mu.Unlock()
 		return nil
 	}
 
@@ -139,6 +154,7 @@ func (pb *PBServer) SyncPut(args *PutArgs, reply *PutReply) error {
 		Value = args.Value
 	}
 	pb.db[args.Key] = Value
+	pb.mu.Unlock()
 	return nil
 
 }
@@ -176,17 +192,22 @@ func (pb *PBServer) tick() {
 	pb.view, _ = pb.vs.Ping(pb.view.Viewnum)
 	pb.SetWhoAmI(pb.view)
 
-	if !pb.initialnized && pb.view.Backup == pb.me {
+	if !pb.initialnized && pb.view.Backup == pb.me && pb.view.Primary != "" {
 
 		args := &GetArgs{"", true}
 		var reply GetReply
 		reply.Db = make(map[string]string)
 
-		for !call(pb.view.Primary, "PBServer.Get", args, &reply) {
-			time.Sleep(viewservice.PingInterval)
+		ok := call(pb.view.Primary, "PBServer.Get", args, &reply)
+		// for !call(pb.view.Primary, "PBServer.Get", args, &reply) {
+		// 	time.Sleep(viewservice.PingInterval)
+		// }
+		if ok {
+			for k, v := range reply.Db {
+				pb.db[k] = v
+			}
+			pb.initialnized = true
 		}
-		pb.db = reply.Db
-		pb.initialnized = true
 	}
 
 	pb.mu.Unlock()

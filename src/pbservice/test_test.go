@@ -480,7 +480,6 @@ func TestConcurrentSameUnreliable(t *testing.T) {
 // constant put/get while crashing and restarting servers
 func TestRepeatedCrash(t *testing.T) {
 	runtime.GOMAXPROCS(4)
-
 	tag := "rc"
 	vshost := port(tag+"v", 1)
 	vs := viewservice.StartServer(vshost)
@@ -532,13 +531,18 @@ func TestRepeatedCrash(t *testing.T) {
 		cha[xi] = make(chan bool)
 		go func(i int) {
 			ok := false
-			defer func() { cha[i] <- ok }()
+			fmt.Println(i)
+			defer func() {
+				fmt.Println("###########################################")
+				cha[i] <- ok
+			}()
 			ck := MakeClerk(vshost, "")
 			data := map[string]string{}
 			rr := rand.New(rand.NewSource(int64(os.Getpid() + i)))
 			for done == false {
 				k := strconv.Itoa((i * 1000000) + (rr.Int() % 10))
 				wanted, ok := data[k]
+				//ok = false
 				if ok {
 					v := ck.Get(k)
 					if v != wanted {
@@ -586,7 +590,6 @@ func TestRepeatedCrash(t *testing.T) {
 
 func TestRepeatedCrashUnreliable(t *testing.T) {
 	runtime.GOMAXPROCS(4)
-
 	tag := "rcu"
 	vshost := port(tag+"v", 1)
 	vs := viewservice.StartServer(vshost)
