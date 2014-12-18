@@ -531,9 +531,7 @@ func TestRepeatedCrash(t *testing.T) {
 		cha[xi] = make(chan bool)
 		go func(i int) {
 			ok := false
-			fmt.Println(i)
 			defer func() {
-				fmt.Println("###########################################")
 				cha[i] <- ok
 			}()
 			ck := MakeClerk(vshost, "")

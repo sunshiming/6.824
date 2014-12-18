@@ -59,10 +59,8 @@ func (pb *PBServer) SetWhoAmI(view viewservice.View) {
 }
 
 func (pb *PBServer) UpdateServer() {
-	pb.mu.Lock()
 	pb.view, _ = pb.vs.Ping(pb.view.Viewnum)
 	pb.SetWhoAmI(pb.view)
-	pb.mu.Unlock()
 }
 
 func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
@@ -70,10 +68,11 @@ func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
 	token := hash(strconv.Itoa(int(args.Token)) + args.Me)
 	pb.mu.Lock()
 
-	if pb.whoami == "Backup" {
+	if pb.whoami != "Primary" {
+		//pb.UpdateServer()
 		reply.Err = ErrWrongServer
 		pb.mu.Unlock()
-		return nil
+		return errors.New("[Put]Not Primary.Error server.")
 	}
 
 	previous, ok := pb.filter[args.Me]
@@ -89,7 +88,6 @@ func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
 		val = ""
 	}
 	reply.PreviousValue = val
-	pb.filter[args.Me] = Node{token, val}
 
 	if args.DoHash {
 		//fmt.Printf("previous  %v  token   %v current val %v      previous val %v \n", previous, token, args.Value, val)
@@ -105,6 +103,9 @@ func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
 		args.Me = pb.me
 		ok := call(pb.view.Backup, "PBServer.SyncPut", args, &BackupReply)
 		if !ok {
+			time.Sleep(viewservice.PingInterval)
+			pb.UpdateServer()
+			fmt.Println(pb.view)
 			pb.mu.Unlock()
 			return errors.New("Sync Fail.")
 		}
@@ -123,6 +124,7 @@ func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
 		// 	time.Sleep(viewservice.PingInterval)
 		// }
 	}
+	pb.filter[args.Me] = Node{token, val}
 	pb.db[args.Key] = Value
 	pb.mu.Unlock()
 
@@ -133,12 +135,11 @@ func (pb *PBServer) SyncPut(args *PutArgs, reply *PutReply) error {
 	var Value string
 	token := hash(strconv.Itoa(int(args.Token)) + args.Me)
 	pb.mu.Lock()
-	//	defer pb.mu.Unlock()
+	defer pb.mu.Unlock()
 
 	previous, ok := pb.filter[args.Me]
 	if ok && previous.Token == token {
 		reply.PreviousValue = previous.PreviousValue
-		pb.mu.Unlock()
 		return nil
 	}
 
@@ -154,7 +155,6 @@ func (pb *PBServer) SyncPut(args *PutArgs, reply *PutReply) error {
 		Value = args.Value
 	}
 	pb.db[args.Key] = Value
-	pb.mu.Unlock()
 	return nil
 
 }
@@ -163,23 +163,23 @@ func (pb *PBServer) Get(args *GetArgs, reply *GetReply) error {
 	pb.mu.Lock()
 	defer pb.mu.Unlock()
 
-	if pb.whoami == "Backup" {
+	if pb.whoami != "Primary" {
+		//pb.UpdateServer()
 		reply.Err = ErrWrongServer
-		return nil
+		return errors.New("[Get]Not Primary.Error server.")
 	}
 
 	if args.GetAll {
 		reply.Db = pb.db
 		if pb.view.Backup == "" {
-			pb.view, _ = pb.vs.Ping(pb.view.Viewnum)
-			pb.SetWhoAmI(pb.view)
+			pb.UpdateServer()
 		}
 	} else {
 		v, ok := pb.db[args.Key]
 		if !ok {
 			reply.Err = ErrNoKey
 			v = ""
-			//return errors.New("no such key/value")
+			return errors.New("no such key/value")
 		}
 		reply.Value = v
 	}
@@ -189,8 +189,7 @@ func (pb *PBServer) Get(args *GetArgs, reply *GetReply) error {
 // ping the viewserver periodically.
 func (pb *PBServer) tick() {
 	pb.mu.Lock()
-	pb.view, _ = pb.vs.Ping(pb.view.Viewnum)
-	pb.SetWhoAmI(pb.view)
+	pb.UpdateServer()
 
 	if !pb.initialnized && pb.view.Backup == pb.me && pb.view.Primary != "" {
 
