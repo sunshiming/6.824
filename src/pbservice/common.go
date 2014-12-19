@@ -80,6 +80,7 @@ func call(srv string, rpcname string,
 	args interface{}, reply interface{}) bool {
 	c, errx := rpc.Dial("unix", srv)
 	if errx != nil {
+		//fmt.Println("### " + srv + "  " + rpcname + "   Connect fail.")
 		return false
 	}
 	defer c.Close()
@@ -88,7 +89,7 @@ func call(srv string, rpcname string,
 	if err == nil {
 		return true
 	}
-	//fmt.Printf(srv + "  " + rpcname + "   ")
+	//fmt.Println("### " + srv + "  " + rpcname + "   ")
 	fmt.Println(err)
 	return false
 }

@@ -4,6 +4,8 @@ import "viewservice"
 import "sync"
 import "time"
 
+//import "fmt"
+
 // You'll probably need to uncomment these:
 // import "time"
 // import "crypto/rand"
@@ -33,7 +35,11 @@ func MakeClerk(vshost string, me string) *Clerk {
 
 func (ck *Clerk) UpdateServer() {
 	//ck.mu.Lock()
-	ck.view, _ = ck.vs.Get()
+	view, ok := ck.vs.Get()
+	if !ok {
+		return
+	}
+	ck.view = view
 	ck.server = ck.view.Primary
 	//ck.mu.Unlock()
 }
@@ -50,18 +56,21 @@ func (ck *Clerk) Get(key string) string {
 	var reply GetReply
 	cnt := 0
 
+	//if ck.view.Viewnum == 0 {
 	if ck.server == "" {
 		ck.UpdateServer()
 	}
 
-	for !call(ck.server, "PBServer.Get", args, &reply) || reply.Err != "" {
+	for !call(ck.server, "PBServer.Get", args, &reply) {
+		time.Sleep(viewservice.PingInterval)
+		//fmt.Println("-----------------  " + ck.Me)
 		if reply.Err == ErrWrongServer || cnt >= RETRY {
+			//fmt.Println(ck.view)
 			ck.UpdateServer()
 			cnt = 0
 		} else {
 			cnt++
 		}
-		time.Sleep(viewservice.PingInterval)
 	}
 
 	return reply.Value
@@ -80,14 +89,14 @@ func (ck *Clerk) PutExt(key string, value string, dohash bool) string {
 		ck.UpdateServer()
 	}
 
-	for !call(ck.server, "PBServer.Put", args, &reply) || reply.Err != "" {
+	for !call(ck.server, "PBServer.Put", args, &reply) {
+		time.Sleep(viewservice.PingInterval)
 		if reply.Err == ErrWrongServer || cnt >= RETRY {
 			ck.UpdateServer()
 			cnt = 0
 		} else {
 			cnt++
 		}
-		time.Sleep(viewservice.PingInterval)
 	}
 
 	return reply.PreviousValue

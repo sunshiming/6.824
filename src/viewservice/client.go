@@ -39,6 +39,7 @@ func call(srv string, rpcname string,
 	args interface{}, reply interface{}) bool {
 	c, errx := rpc.Dial("unix", srv)
 	if errx != nil {
+		fmt.Println("********* err in vs client  connect.    " + srv + "     " + rpcname)
 		return false
 	}
 	defer c.Close()

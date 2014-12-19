@@ -135,7 +135,6 @@ func (vs *ViewServer) tick() {
 	if vs.view.Viewnum == 0 {
 		return
 	}
-
 	vs.mu.Lock()
 	for e := vs.serverlist.Front(); e != nil; e = e.Next() {
 		name := e.Value.(Node).name
@@ -170,6 +169,7 @@ func (vs *ViewServer) tick() {
 	}
 
 	vs.mu.Unlock()
+	fmt.Println("------------ Tick -------------------")
 }
 
 //

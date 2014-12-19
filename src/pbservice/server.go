@@ -103,8 +103,8 @@ func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
 		args.Me = pb.me
 		ok := call(pb.view.Backup, "PBServer.SyncPut", args, &BackupReply)
 		if !ok {
-			time.Sleep(viewservice.PingInterval)
-			pb.UpdateServer()
+			//time.Sleep(viewservice.PingInterval)
+			//pb.UpdateServer()
 			fmt.Println(pb.view)
 			pb.mu.Unlock()
 			return errors.New("Sync Fail.")
@@ -133,8 +133,14 @@ func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
 
 func (pb *PBServer) SyncPut(args *PutArgs, reply *PutReply) error {
 	var Value string
-	token := hash(strconv.Itoa(int(args.Token)) + args.Me)
 	pb.mu.Lock()
+	if pb.whoami != "Backup" {
+		//pb.UpdateServer()
+		reply.Err = ErrWrongServer
+		pb.mu.Unlock()
+		return errors.New("[SyncPut]Not Backup.Error server.")
+	}
+	token := hash(strconv.Itoa(int(args.Token)) + args.Me)
 	defer pb.mu.Unlock()
 
 	previous, ok := pb.filter[args.Me]
