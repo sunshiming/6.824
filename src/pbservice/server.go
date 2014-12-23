@@ -48,7 +48,7 @@ type PBServer struct {
 	// Your declarations here.
 }
 
-func (pb *PBServer) SetWhoAmI(view viewservice.View) {
+func (pb *PBServer) SetWhoAmI(view viewservice.View) error {
 	if pb.me == view.Primary {
 		pb.whoami = "Primary"
 	} else if pb.me == view.Backup {
@@ -56,22 +56,24 @@ func (pb *PBServer) SetWhoAmI(view viewservice.View) {
 	} else {
 		pb.whoami = "Unknown"
 	}
+	return nil
 }
 
-func (pb *PBServer) UpdateServer() {
+func (pb *PBServer) UpdateServer() error {
 	pb.view, _ = pb.vs.Ping(pb.view.Viewnum)
 	pb.SetWhoAmI(pb.view)
+	return nil
 }
 
 func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
 	var Value string
 	token := hash(strconv.Itoa(int(args.Token)) + args.Me)
 	pb.mu.Lock()
+	defer pb.mu.Unlock()
 
 	if pb.whoami != "Primary" {
 		//pb.UpdateServer()
 		reply.Err = ErrWrongServer
-		pb.mu.Unlock()
 		return errors.New("[Put]Not Primary.Error server.")
 	}
 
@@ -79,7 +81,6 @@ func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
 	if ok && previous.Token == token {
 		//reject dupicate
 		reply.PreviousValue = previous.PreviousValue
-		pb.mu.Unlock()
 		return nil
 	}
 
@@ -101,12 +102,19 @@ func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
 		var BackupReply PutReply
 		args.Token = nrand()
 		args.Me = pb.me
+		// for !call(pb.view.Backup, "PBServer.SyncPut", args, &BackupReply) {
+		// 	time.Sleep(viewservice.PingInterval)
+
+		// 	fmt.Println("Try to sync again.")
+		// 	pb.UpdateServer()
+		// }
+		// fmt.Println("Sync success!")
+
+		// }
 		ok := call(pb.view.Backup, "PBServer.SyncPut", args, &BackupReply)
 		if !ok {
-			//time.Sleep(viewservice.PingInterval)
-			//pb.UpdateServer()
-			fmt.Println(pb.view)
-			pb.mu.Unlock()
+			//	pb.UpdateServer()
+			//	fmt.Println(pb.view)
 			return errors.New("Sync Fail.")
 		}
 		// cnt := 0
@@ -126,7 +134,6 @@ func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
 	}
 	pb.filter[args.Me] = Node{token, val}
 	pb.db[args.Key] = Value
-	pb.mu.Unlock()
 
 	return nil
 }
@@ -134,14 +141,13 @@ func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
 func (pb *PBServer) SyncPut(args *PutArgs, reply *PutReply) error {
 	var Value string
 	pb.mu.Lock()
+	defer pb.mu.Unlock()
 	if pb.whoami != "Backup" {
 		//pb.UpdateServer()
 		reply.Err = ErrWrongServer
-		pb.mu.Unlock()
-		return errors.New("[SyncPut]Not Backup.Error server.")
+		return errors.New("[SyncPut]Not Primary.Error server.")
 	}
 	token := hash(strconv.Itoa(int(args.Token)) + args.Me)
-	defer pb.mu.Unlock()
 
 	previous, ok := pb.filter[args.Me]
 	if ok && previous.Token == token {
@@ -198,7 +204,6 @@ func (pb *PBServer) tick() {
 	pb.UpdateServer()
 
 	if !pb.initialnized && pb.view.Backup == pb.me && pb.view.Primary != "" {
-
 		args := &GetArgs{"", true}
 		var reply GetReply
 		reply.Db = make(map[string]string)
@@ -216,6 +221,7 @@ func (pb *PBServer) tick() {
 	}
 
 	pb.mu.Unlock()
+	//fmt.Println("### server view ", pb.view)
 }
 
 // tell the server to shut itself down.
@@ -236,8 +242,8 @@ func StartServer(vshost string, me string) *PBServer {
 	pb.mu = &sync.Mutex{}
 	pb.initialnized = false
 
-	pb.view, _ = pb.vs.Ping(0)
-
+	//pb.view, _ = pb.vs.Ping(0)
+	pb.view = viewservice.View{0, "", ""}
 	rpcs := rpc.NewServer()
 	rpcs.Register(pb)
 

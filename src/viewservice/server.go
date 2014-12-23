@@ -72,7 +72,9 @@ func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
 // server Get() RPC handler.
 //
 func (vs *ViewServer) Get(args *GetArgs, reply *GetReply) error {
+	vs.mu.Lock()
 	reply.View = vs.view
+	vs.mu.Unlock()
 	return nil
 }
 
@@ -106,19 +108,25 @@ func (vs ViewServer) Max(a, b uint) uint {
 func (vs *ViewServer) ChangeView() {
 	changed := false
 
+	if vs.view.Primary == "" && vs.view.Backup != "" {
+		vs.view.Primary = vs.view.Backup
+		vs.view.Backup = ""
+		changed = true
+	}
+
 	for e := vs.serverlist.Front(); e != nil; e = e.Next() {
 		name := e.Value.(Node).name
 		//server := vs.state[name]
-		if vs.NotUsed(name) {
-			if vs.view.Primary == "" {
-				vs.view.Primary = name
-				changed = true
-			} else if vs.view.Backup == "" {
-				vs.view.Backup = name
-				changed = true
-				break
-			}
+		//if vs.NotUsed(name) {
+		if vs.view.Primary == "" {
+			vs.view.Primary = name
+			changed = true
+		} else if vs.view.Backup == "" && name != vs.view.Primary {
+			vs.view.Backup = name
+			changed = true
+			break
 		}
+		//}
 	}
 
 	if changed {
@@ -169,7 +177,7 @@ func (vs *ViewServer) tick() {
 	}
 
 	vs.mu.Unlock()
-	fmt.Println("------------ Tick -------------------")
+	//fmt.Println("--- vs me", vs.me)
 }
 
 //

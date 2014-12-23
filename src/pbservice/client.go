@@ -3,6 +3,7 @@ package pbservice
 import "viewservice"
 import "sync"
 import "time"
+import "strconv"
 
 //import "fmt"
 
@@ -17,13 +18,17 @@ type Clerk struct {
 	server string
 	mu     *sync.Mutex
 	view   viewservice.View
+	vshost string
 	// Your declarations here
 }
 
 func MakeClerk(vshost string, me string) *Clerk {
 	ck := new(Clerk)
 	ck.vs = viewservice.MakeClerk(me, vshost)
-	ck.Me = me
+	ck.vshost = vshost
+	//ck.Me = me
+	ck.Me = strconv.FormatInt(nrand(), 10)
+
 	ck.mu = &sync.Mutex{}
 
 	view, _ := ck.vs.Get()
@@ -37,10 +42,13 @@ func (ck *Clerk) UpdateServer() {
 	//ck.mu.Lock()
 	view, ok := ck.vs.Get()
 	if !ok {
+		//fmt.Println("********** vs", ck.vshost)
+
 		return
 	}
 	ck.view = view
 	ck.server = ck.view.Primary
+	//fmt.Println("^^^ client view ", ck.view)
 	//ck.mu.Unlock()
 }
 
@@ -63,7 +71,7 @@ func (ck *Clerk) Get(key string) string {
 
 	for !call(ck.server, "PBServer.Get", args, &reply) {
 		time.Sleep(viewservice.PingInterval)
-		//fmt.Println("-----------------  " + ck.Me)
+		//fmt.Println("-----------------  get" + ck.Me)
 		if reply.Err == ErrWrongServer || cnt >= RETRY {
 			//fmt.Println(ck.view)
 			ck.UpdateServer()
@@ -88,9 +96,9 @@ func (ck *Clerk) PutExt(key string, value string, dohash bool) string {
 	if ck.server == "" {
 		ck.UpdateServer()
 	}
-
 	for !call(ck.server, "PBServer.Put", args, &reply) {
 		time.Sleep(viewservice.PingInterval)
+		//fmt.Println("-----------------  put" + ck.Me)
 		if reply.Err == ErrWrongServer || cnt >= RETRY {
 			ck.UpdateServer()
 			cnt = 0
